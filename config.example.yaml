@@ -1,0 +1,51 @@
+# Configuracion de ejemplo para sysadmin-tui
+# Copia este archivo a config.yaml y ajusta los valores segun tu entorno
+
+app:
+  theme: dark
+  language: es
+  confirm_destructive: true
+  log_level: info
+  audit_log: /var/log/sysadmin-tui/audit.jsonl
+
+modules:
+  containers:
+    enabled: true
+    runtime: auto          # auto | docker | podman
+  firewall:
+    enabled: true
+    backend: auto          # auto | ufw | firewalld | iptables
+  web_services:
+    enabled: true
+    web_server: auto       # auto | nginx | apache | caddy
+  network:
+    enabled: true
+  databases:
+    enabled: true
+    postgres:
+      host: localhost
+      port: 5432
+    mysql:
+      host: localhost
+      port: 3306
+  monitoring:
+    enabled: true
+  users:
+    enabled: true
+  updates:
+    enabled: true
+  backups:
+    enabled: true
+    backup_dir: /var/backups/sysadmin-tui
+  performance:
+    enabled: true
+  virtualization:
+    enabled: false          # solo si usas KVM/QEMU
+  audit:
+    enabled: true
+
+sudo:
+  use_sudo: true
+  sudo_user: root
+  ask_password: true
+  sudo_command: /usr/bin/sudo
