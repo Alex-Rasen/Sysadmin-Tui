@@ -2,17 +2,23 @@
 
 Aplicacion de consola interactiva para administracion de servidores Linux.
 
+## Vista previa
+
+![Vista previa de SysAdmin TUI](../preview.png)
+
 ## Instalacion
 
 1. Clonar o copiar el repositorio.
 2. Ejecutar `./install.sh` como usuario normal (requiere sudo para directorios del sistema).
-3. Usar el comando `sysadmin-tui` para iniciar la interfaz interactiva.
+3. Usar el comando `sudo sysadmin-tui` para iniciar la interfaz interactiva con acceso a todas las funciones.
 
 ## Uso
 
-- Modo interactivo: `sysadmin-tui`
-- Modo CLI directo: `sysadmin-tui <modulo> <accion> [--param valor ...]`
-  Ejemplo: `sysadmin-tui containers list --all`
+Para acceder a todas las funciones administrativas, invoca el comando con `sudo`.
+
+- Modo interactivo: `sudo sysadmin-tui`
+- Modo CLI directo: `sudo sysadmin-tui <modulo> <accion> [--param valor ...]`
+  Ejemplo: `sudo sysadmin-tui containers list --all`
 
 ## Configuracion
 
