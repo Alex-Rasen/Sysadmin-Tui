@@ -46,6 +46,10 @@ class SysAdminApp(App):
         height: 14;
         margin-bottom: 1;
     }
+    #container_images_table {
+        height: 10;
+        margin-bottom: 1;
+    }
     #result_table {
         height: 1fr;
         margin-bottom: 1;
@@ -171,6 +175,9 @@ class SysAdminApp(App):
             table.add_row("Sin servicios activos detectados", "-", "No hay unidades systemd relevantes")
         await content.mount(table)
 
+        if self.current_module.name == "containers":
+            await self._mount_container_images(content)
+
         await content.mount(Static("Acciones", classes="section-title"))
         actions = Horizontal(classes="action-grid")
         await content.mount(actions)
@@ -179,6 +186,23 @@ class SysAdminApp(App):
             await actions.mount(Button(desc, id=f"action_{action_name}"))
         await content.mount(Button("Detalle del servicio seleccionado", id="btn_service_detail", variant="primary"))
         table.focus()
+
+    async def _mount_container_images(self, content: ScrollableContainer) -> None:
+        """Muestra las imagenes disponibles del runtime de contenedores."""
+        if not self.current_module:
+            return
+        await content.mount(Static("Imagenes disponibles", classes="section-title"))
+        result = self.current_module.execute_action("images", {})
+        rows = self._result_rows(result or "")
+        image_table = DataTable(id="container_images_table")
+        image_table.cursor_type = "row"
+        if not rows:
+            rows = [{"Repositorio": "-", "Etiqueta": "-", "ID": "-", "Tamano": self._friendly_result_message(result or "Sin imagenes disponibles", True)}]
+        columns = self._normalize_columns(rows)
+        image_table.add_columns(*columns)
+        for row in rows:
+            image_table.add_row(*(row.get(column, "") for column in columns))
+        await content.mount(image_table)
 
     def _services_for_current_module(self) -> List[Dict[str, str]]:
         if not self.current_module:

@@ -60,7 +60,7 @@ class Module(BaseModule):
         return out if code == 0 else f"Error: {err}"
 
     def action_images(self) -> str:
-        fmt = r"table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+        fmt = r"table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
         cmd = f"{self.runtime} images --format '{fmt}'"
         code, out, err = self.run_command(cmd)
         return out if code == 0 else f"Error: {err}"
