@@ -10,3 +10,4 @@ venv/
 config.yaml
 audit.jsonl
 *.log
+AGENTS.md

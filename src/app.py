@@ -8,6 +8,7 @@ Proporciona una interfaz interactiva completa:
 """
 import re
 from typing import Optional, Dict, Any, List
+from textual.timer import Timer
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import Header, Footer, Static, ListView, ListItem, Label, Input, Button, DataTable
@@ -54,6 +55,14 @@ class SysAdminApp(App):
         height: 1fr;
         margin-bottom: 1;
     }
+    #process_table {
+        height: 1fr;
+        margin-bottom: 1;
+    }
+    #process_actions {
+        height: auto;
+        margin-bottom: 1;
+    }
     .section-title {
         text-style: bold;
         margin-top: 1;
@@ -62,6 +71,13 @@ class SysAdminApp(App):
     .action-grid {
         height: auto;
         margin-bottom: 1;
+        width: 100%;
+    }
+    .action-grid Button {
+        width: 100%;
+        min-width: 0;
+        padding: 0 1;
+        margin: 0 0 1 0;
     }
     .status-panel {
         border: round $primary;
@@ -87,7 +103,7 @@ class SysAdminApp(App):
         margin-bottom: 1;
     }
     Button {
-        margin-right: 1;
+        padding: 0 1;
     }
     """
 
@@ -110,6 +126,9 @@ class SysAdminApp(App):
         self.action_params: Dict[str, Any] = {}
         self.action_inputs: Dict[str, Input] = {}
         self.selected_service: Optional[str] = None
+        self.selected_process_pid: Optional[int] = None
+        self.process_sort_by: str = "cpu"
+        self.performance_refresh_timer: Optional[Timer] = None
         self.state: str = "modules"  # "modules", "dashboard", "form", "result"
 
     SERVICE_KEYWORDS = {
@@ -140,9 +159,11 @@ class SysAdminApp(App):
                 yield ScrollableContainer(id="content_scroll")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.query_one("#module_list", ListView).focus()
         self._populate_module_list()
+        self.performance_refresh_timer = self.set_interval(2.0, self._refresh_process_table)
+        await self._show_initial_module()
 
     def _populate_module_list(self) -> None:
         """Llena la lista de modulos en la barra lateral."""
@@ -151,6 +172,29 @@ class SysAdminApp(App):
         for mod_name, mod_class in self.registry.get_all().items():
             list_view.append(ListItem(Label(mod_class.display_name)))
 
+    async def _show_initial_module(self) -> None:
+        mod_names = list(self.registry.get_all().keys())
+        if not mod_names:
+            return
+        index = mod_names.index("performance") if "performance" in mod_names else 0
+        self.query_one("#module_list", ListView).index = index
+        await self._show_module_by_index(index)
+
+    async def _show_module_by_index(self, index: int) -> None:
+        mod_names = list(self.registry.get_all().keys())
+        if index >= len(mod_names):
+            return
+        mod_name = mod_names[index]
+        mod_class = self.registry.get_all()[mod_name]
+        self.current_module = mod_class(self.config, self.executor, self.logger)
+        self.selected_service = None
+        self.selected_process_pid = None
+        self.state = "dashboard"
+        await self._populate_module_dashboard()
+
+    def _compact_button(self, label: str, *, id: str, variant: str = "default") -> Button:
+        return Button(label, id=id, variant=variant, compact=True)
+
     async def _populate_module_dashboard(self) -> None:
         """Muestra una vista GUI con servicios activos y botones de accion."""
         content = self.query_one("#content_scroll", ScrollableContainer)
@@ -158,6 +202,9 @@ class SysAdminApp(App):
         if not self.current_module:
             return
         await content.mount(Static(f"Modulo: {self.current_module.display_name}", classes="content-title"))
+        if self.current_module.name == "performance":
+            await self._mount_performance_dashboard(content)
+            return
         await content.mount(Static("Servicios activos", classes="section-title"))
         table = DataTable(id="services_table")
         table.cursor_type = "row"
@@ -179,13 +226,66 @@ class SysAdminApp(App):
             await self._mount_container_images(content)
 
         await content.mount(Static("Acciones", classes="section-title"))
-        actions = Horizontal(classes="action-grid")
+        actions = Vertical(classes="action-grid")
         await content.mount(actions)
         for action_name, action_def in self.current_module.actions.items():
             desc = action_def.get("description", action_name)
-            await actions.mount(Button(desc, id=f"action_{action_name}"))
-        await content.mount(Button("Detalle del servicio seleccionado", id="btn_service_detail", variant="primary"))
+            await actions.mount(self._compact_button(desc, id=f"action_{action_name}"))
+        await content.mount(self._compact_button("Detalle del servicio seleccionado", id="btn_service_detail", variant="primary"))
         table.focus()
+
+    async def _mount_performance_dashboard(self, content: ScrollableContainer) -> None:
+        await content.mount(Static("Visor de tareas", classes="section-title"))
+        actions = Vertical(id="process_actions", classes="action-grid")
+        await content.mount(actions)
+        await actions.mount(self._compact_button("CPU", id="sort_cpu", variant="primary" if self.process_sort_by == "cpu" else "default"))
+        await actions.mount(self._compact_button("RAM", id="sort_ram", variant="primary" if self.process_sort_by == "ram" else "default"))
+        await actions.mount(self._compact_button("Disco", id="sort_disk", variant="primary" if self.process_sort_by == "disk" else "default"))
+        await actions.mount(self._compact_button("Red", id="sort_net", variant="primary" if self.process_sort_by == "net" else "default"))
+        await actions.mount(self._compact_button("Actualizar", id="btn_process_refresh"))
+        await actions.mount(self._compact_button("Terminar proceso", id="btn_process_kill", variant="error"))
+
+        table = DataTable(id="process_table")
+        table.cursor_type = "row"
+        table.add_columns("PID", "USER", "S", "CPU%", "RAM%", "RAM", "DISCO", "RED", "COMANDO")
+        await content.mount(table)
+        await self._refresh_process_table()
+        table.focus()
+
+        await content.mount(Static("Acciones", classes="section-title"))
+        module_actions = Vertical(classes="action-grid")
+        await content.mount(module_actions)
+        for action_name, action_def in self.current_module.actions.items():
+            if action_name in {"process_viewer", "terminate_process"}:
+                continue
+            desc = action_def.get("description", action_name)
+            await module_actions.mount(self._compact_button(desc, id=f"action_{action_name}"))
+
+    async def _refresh_process_table(self) -> None:
+        if self.state != "dashboard" or not self.current_module or self.current_module.name != "performance":
+            return
+        try:
+            table = self.query_one("#process_table", DataTable)
+        except Exception:
+            return
+        table.clear(columns=False)
+        processes = self.current_module.list_processes(self.process_sort_by)
+        if not processes:
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "No se pudieron leer procesos")
+            return
+        for process in processes:
+            table.add_row(
+                str(process["pid"]),
+                process["user"],
+                process["state"],
+                f"{process['cpu_percent']:.1f}",
+                f"{process['ram_percent']:.1f}",
+                self.current_module.format_bytes(process["ram_bytes"]),
+                self.current_module.format_bytes(process["disk_bytes"]),
+                str(process["net_connections"]),
+                process["command"],
+                key=str(process["pid"]),
+            )
 
     async def _mount_container_images(self, content: ScrollableContainer) -> None:
         """Muestra las imagenes disponibles del runtime de contenedores."""
@@ -394,13 +494,7 @@ class SysAdminApp(App):
             if index is None:
                 return
             mod_names = list(self.registry.get_all().keys())
-            if index >= len(mod_names):
-                return
-            mod_name = mod_names[index]
-            mod_class = self.registry.get_all()[mod_name]
-            self.current_module = mod_class(self.config, self.executor, self.logger)
-            self.state = "dashboard"
-            await self._populate_module_dashboard()
+            await self._show_module_by_index(index)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_execute":
@@ -409,6 +503,13 @@ class SysAdminApp(App):
             await self._go_back()
         elif event.button.id == "btn_service_detail":
             await self._show_selected_service_detail()
+        elif event.button.id == "btn_process_refresh":
+            await self._refresh_process_table()
+        elif event.button.id == "btn_process_kill":
+            await self._terminate_selected_process()
+        elif event.button.id and event.button.id.startswith("sort_"):
+            self.process_sort_by = event.button.id.replace("sort_", "", 1)
+            await self._populate_module_dashboard()
         elif event.button.id and event.button.id.startswith("action_"):
             action_name = event.button.id.replace("action_", "", 1)
             if self.current_module and action_name in self.current_module.actions:
@@ -426,6 +527,33 @@ class SysAdminApp(App):
             value = event.row_key.value
             if value != "Sin servicios activos detectados":
                 self.selected_service = str(value)
+        elif event.data_table.id == "process_table" and event.row_key is not None:
+            value = event.row_key.value
+            if str(value).isdigit():
+                self.selected_process_pid = int(str(value))
+
+    async def _terminate_selected_process(self) -> None:
+        if not self.current_module or self.current_module.name != "performance":
+            return
+        try:
+            table = self.query_one("#process_table", DataTable)
+            if table.cursor_row is not None and table.cursor_row < len(table.rows):
+                key = list(table.rows.keys())[table.cursor_row]
+                value = str(key.value)
+                if value.isdigit():
+                    self.selected_process_pid = int(value)
+        except Exception:
+            pass
+        if not self.selected_process_pid:
+            self.notify("Selecciona un proceso en la tabla", severity="warning")
+            return
+        result = self.current_module.execute_action("terminate_process", {"pid": self.selected_process_pid})
+        if result and result.lower().startswith("error:"):
+            self.notify(result, severity="error")
+        else:
+            self.notify(result or "Proceso terminado", severity="information")
+        self.selected_process_pid = None
+        await self._refresh_process_table()
 
     async def _show_selected_service_detail(self) -> None:
         self.state = "result"
